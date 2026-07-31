@@ -1,0 +1,1078 @@
+// Game Code: Candy best Johny
+// Structured and Debugged by Rohit (14-year-old developer) using AI assistance.
+// Status: 100% Working in Unity Engine.using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+
+public class CandySystem : MonoBehaviour
+{
+    public int width = 7;
+    public int height = 9;
+
+    public float topSpace = 2.2f;
+    public float bottomSpace = 1.8f;
+
+    public bool autoSize = true;
+    public float manualSize = 0.1f;
+
+    public GameObject[] candies;
+    public AutoBoardLayout boardLayout;
+    public GameObject bombPrefab;
+    public Transform candyHolder;
+    public int bombType = 6;
+       
+   // ===== SOUND SYSTEM =====
+    public AudioSource audioSource;
+
+     public AudioClip popSound;
+     public AudioClip swapSound;
+     public AudioClip winSound;
+     public AudioClip fallSound;
+    // ========================
+
+    
+    // ============================
+
+    public float moveSpeed = 25f;
+    public float popSpeed = 40f;
+
+    // SCORE
+    public TMP_Text scoreText;
+    public TMP_Text levelText;
+    public int levelNumber = 2;
+    public TMP_Text redText;
+    public TMP_Text blueText;
+    public TMP_Text greenText;
+    public TMP_Text yellowText;
+    public TMP_Text purpleText;
+    public TMP_Text orangeText;
+    public int score = 0;
+    public int moves = 20;
+    public TMP_Text movesText;
+
+    // CANDY TARGET
+  public int redCollected = 0;
+  public int blueCollected = 0;
+  public int greenCollected = 0;
+  public int yellowCollected = 0;
+  public int purpleCollected = 0;
+  public int orangeCollected = 0;
+  public LevelManager levelManager;
+    
+  public void ExplodeBombAt(Vector2 pos)
+   {
+      if (processingBoard)
+    return;
+
+      int bx = GetX(pos);
+       int by = GetY(pos);
+       
+        for (int x = bx - 1; x <= bx + 1; x++)
+       {
+          for (int y = by - 1; y <= by + 1; y++)
+           {
+             if (Inside(x, y))
+             {
+                 DestroyCandy(x, y);
+             }
+            }
+        }
+
+        score += 100; // Bomb bonus score
+        UpdateScore();
+
+       StartCoroutine(BombFall());
+     }
+
+    GameObject[,] grid;
+    int[,] candyType;
+
+    Vector2Int bombPosition = new Vector2Int(-1, -1);
+
+    float cellSize;
+    Vector2 startPos;
+
+    bool busy = false;
+    bool processingBoard = false;
+    bool bombRunning = false;
+
+    Vector2 touchStart;
+    bool dragging = false;
+    bool inputLocked = true;
+
+    GameObject selected;
+
+    void Start()
+    {
+        
+        moves = PlayerPrefs.GetInt("Moves", 20);
+        Application.targetFrameRate = 120;
+
+        SetupCamera();
+        SetupBoard();
+        
+        grid = new GameObject[width, height];
+        candyType = new int[width, height];
+
+         CreateGrid();
+
+          UpdateScore();
+
+         if (PlayerPrefs.GetInt("Music", 1) == 0)
+         {
+          if (audioSource != null)
+           audioSource.mute = true;
+          }
+
+          StartCoroutine(ProcessBoard());
+          StartCoroutine(UnlockInput());
+    }
+
+    void Update()
+    {
+       if (busy || inputLocked)
+       return;
+
+        Vector2 worldPos =
+            Camera.main.ScreenToWorldPoint(
+                Input.mousePosition
+            );
+
+        if (Input.GetMouseButtonDown(0))
+        {
+            touchStart = worldPos;
+
+            int x = GetX(worldPos);
+            int y = GetY(worldPos);
+
+            if (Inside(x, y))
+            {
+                selected = grid[x, y];
+                dragging = true;
+            }
+        }
+
+        if (Input.GetMouseButton(0) &&
+            dragging &&
+            selected != null)
+        {
+            // ===== FIX ERROR =====
+            if (selected == null)
+            {
+                dragging = false;
+                return;
+            }
+            // =====================
+
+            Vector2 diff =
+                worldPos - touchStart;
+
+            Vector2 limited =
+                Vector2.zero;
+
+            if (Mathf.Abs(diff.x) >
+                Mathf.Abs(diff.y))
+            {
+                limited.x =
+                    Mathf.Clamp(
+                        diff.x,
+                        -cellSize * 0.55f,
+                        cellSize * 0.55f
+                    );
+            }
+            else
+            {
+                limited.y =
+                    Mathf.Clamp(
+                        diff.y,
+                        -cellSize * 0.55f,
+                        cellSize * 0.55f
+                    );
+            }
+
+            selected.transform.position =
+                Vector2.Lerp(
+                    selected.transform.position,
+                    GetSnapPos(touchStart) + limited,
+                    25f * Time.deltaTime
+                );
+        }
+
+        if (Input.GetMouseButtonUp(0) &&
+            dragging)
+        {
+            dragging = false;
+
+            // ===== FIX ERROR =====
+            if (selected == null)
+            {
+                return;
+            }
+            // =====================
+
+            Vector2 end = worldPos;
+            Vector2 diff =
+                end - touchStart;
+
+            int x = GetX(touchStart);
+            int y = GetY(touchStart);
+
+            int dx =
+                Mathf.Abs(diff.x) >
+                Mathf.Abs(diff.y)
+                ? (diff.x > 0 ? 1 : -1)
+                : 0;
+
+            int dy =
+                dx == 0
+                ? (diff.y > 0 ? 1 : -1)
+                : 0;
+
+            int x2 = x + dx;
+            int y2 = y + dy;
+
+            if (Inside(x, y) &&
+                Inside(x2, y2))
+            {
+                StartCoroutine(
+                    Swap(x, y, x2, y2)
+                );
+            }
+            else
+            {
+                StartCoroutine(
+                    Move(
+                        selected,
+                        GetPos(x, y)
+                    )
+                );
+            }
+
+            selected = null;
+        }
+    }
+
+    void SetupCamera()
+    {
+        Camera.main.orthographic = true;
+
+        float targetAspect = 9f / 16f;
+
+        float windowAspect =
+            (float)Screen.width /
+            Screen.height;
+
+        float scaleHeight =
+            windowAspect / targetAspect;
+
+        Camera.main.orthographicSize = 6f;
+
+        if (scaleHeight < 1f)
+        {
+            Camera.main.orthographicSize /=
+                scaleHeight;
+        }
+
+        Camera.main.transform.position =
+            new Vector3(0, 0, -10);
+    }
+
+    void SetupBoard()
+    {
+        float usableHeight =
+      Camera.main.orthographicSize * 2f
+      - topSpace
+      - bottomSpace;
+
+      float usableWidth =
+      Camera.main.orthographicSize * 2f *
+      Screen.width / Screen.height;
+
+       float cellByHeight =
+       usableHeight / height;
+
+      float cellByWidth =
+       usableWidth / width;
+
+        cellSize =
+      Mathf.Min(cellByHeight, cellByWidth) * 0.78f;
+
+        float boardWidth =
+            width * cellSize;
+
+        float boardHeight =
+            height * cellSize;
+
+        float startX =
+            -boardWidth / 2f
+            + cellSize / 2f;
+
+        float startY =
+            -boardHeight / 2f
+            + cellSize / 2f;
+            
+
+        startPos =
+            new Vector2(startX, startY);
+    }
+
+    void CreateGrid()
+    {   
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                Spawn(x, y);
+            }
+        }
+    }
+
+    void Spawn(int x, int y)
+    {
+        int i =
+            Random.Range(
+                0,
+                candies.Length
+            );
+
+        Vector2 spawnPos =
+            GetPos(x, y + 3);
+
+        GameObject c =
+            Instantiate(
+                candies[i],
+                spawnPos,
+                Quaternion.identity
+            );
+          
+
+      if (candyHolder != null)
+       {
+         c.transform.SetParent(
+         candyHolder,
+         false
+         );
+        }
+
+      
+      float size =
+         autoSize
+         ? cellSize * 0.72f
+        : manualSize;
+
+        if (boardLayout != null)
+       {
+          size *= boardLayout.boardScale;
+        }
+
+        c.transform.localScale = Vector3.one * size;
+
+        grid[x, y] = c;
+        candyType[x, y] = i;
+
+        StartCoroutine(
+            Move(
+                c,
+                GetPos(x, y)
+            )
+        );
+    }
+
+    IEnumerator Swap(
+        int x1,
+        int y1,
+        int x2,
+        int y2
+    )
+    {
+        busy = true;
+
+        if(moves > 0)
+   {
+        moves--;
+    }
+
+    UpdateScore();
+
+        // SWAP SOUND
+        if (audioSource != null &&
+            swapSound != null)
+        {
+            audioSource.PlayOneShot(swapSound);
+        }
+
+        GameObject a =
+            grid[x1, y1];
+
+        GameObject b =
+            grid[x2, y2];
+
+        if (a == null || b == null)
+        {
+          
+            busy = false;
+            yield break;
+        }
+
+        yield return Move(a, GetPos(x2, y2));
+        yield return Move(b, GetPos(x1, y1));
+
+        grid[x1, y1] = b;
+        grid[x2, y2] = a;
+
+        int t = candyType[x1, y1];
+
+        candyType[x1, y1] =
+            candyType[x2, y2];
+
+        candyType[x2, y2] = t;
+
+        if (HasMatch())
+        {
+            // WIN SOUND
+            if (audioSource != null &&
+                winSound != null)
+            {
+                audioSource.PlayOneShot(winSound);
+            }
+
+            yield return ProcessBoard();
+       if(moves <= 0)
+       {
+         if   (
+           redCollected >= levelManager.redTarget &&
+           blueCollected >= levelManager.blueTarget &&
+           greenCollected >= levelManager.greenTarget &&
+           yellowCollected >= levelManager.yellowTarget &&
+           purpleCollected >= levelManager.purpleTarget &&
+           orangeCollected >= levelManager.orangeTarget
+          )
+         {
+           levelManager.LevelComplete();
+          }
+          else
+           {
+              Debug.Log("GAME OVER");
+            }
+          }
+        }
+        else
+        {
+            yield return Move(a, GetPos(x1, y1));
+            yield return Move(b, GetPos(x2, y2));
+
+            grid[x1, y1] = a;
+            grid[x2, y2] = b;
+
+            t = candyType[x1, y1];
+
+            candyType[x1, y1] =
+                candyType[x2, y2];
+
+            candyType[x2, y2] = t;
+        }
+
+        busy = false;
+    }
+
+    bool HasMatch()
+    {
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                int type = candyType[x, y];
+
+                if (type < 0)
+                    continue;
+
+                if (x < width - 2)
+                {
+                    if (
+                        candyType[x + 1, y] == type &&
+                        candyType[x + 2, y] == type
+                    )
+                    {
+                        return true;
+                    }
+                }
+
+                if (y < height - 2)
+                {
+                    if (
+                        candyType[x, y + 1] == type &&
+                        candyType[x, y + 2] == type
+                    )
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+   IEnumerator ProcessBoard()
+{
+       if (processingBoard)
+        yield break;
+
+    processingBoard = true;
+
+    yield return new WaitForSeconds(0.1f);
+
+    while (true)
+    {
+        List<Vector2Int> matches = GetMatches();
+
+        if (matches.Count == 0)
+            break;
+            
+            if (PlayerPrefs.GetInt("Vibration", 1) == 1)
+           {
+               Handheld.Vibrate();
+            }
+
+        score += matches.Count * 10;
+
+        UpdateScore();
+
+        foreach (var pos in matches)
+        {
+            DestroyCandy(pos.x, pos.y);
+            
+        }
+
+        if (bombPosition.x >= 0 && bombPosition.y >= 0)
+       {
+              if (grid[bombPosition.x, bombPosition.y] != null)
+               {
+                  Destroy(grid[bombPosition.x, bombPosition.y]);
+
+                   grid[bombPosition.x, bombPosition.y] = null;
+                   candyType[bombPosition.x, bombPosition.y] = -1;
+               }
+ 
+                  GameObject bomb = Instantiate(
+                  bombPrefab,
+                  GetPos(bombPosition.x, bombPosition.y),
+                   Quaternion.identity
+               );
+
+                   Bomb bombScript = bomb.GetComponent<Bomb>();
+
+                    if (bombScript != null)
+                   { 
+                      bombScript.candySystem = this;
+                    }
+                  
+                  grid[bombPosition.x, bombPosition.y] = bomb;
+                  candyType[bombPosition.x, bombPosition.y] = bombType;
+
+            
+
+               bombPosition = new Vector2Int(-1, -1);
+        }
+
+        yield return new WaitForSeconds(0.15f);
+
+        yield return Fall();
+
+    }
+
+    processingBoard = false;
+
+}   // ← ProcessBoard यहीं खत्म होगा
+
+
+
+public void UpdateScore()
+{
+      if(levelText != null)
+    {
+       levelText.text = " " + levelNumber;
+    }
+    if(movesText != null)
+   {
+        movesText.text = moves.ToString();
+   }
+    
+    if (scoreText != null)
+    {
+        scoreText.text = " " + score;
+    }
+
+ if(levelManager.redTarget > 0 &&
+   redCollected >= levelManager.redTarget)
+ {
+    redText.transform.parent.gameObject.SetActive(false);
+ }
+
+ if(levelManager.blueTarget > 0 &&
+   blueCollected >= levelManager.blueTarget)
+ {
+    blueText.transform.parent.gameObject.SetActive(false);
+ }
+ 
+  if(levelManager.greenTarget > 0 &&
+   greenCollected >= levelManager.greenTarget)
+ {
+    greenText.transform.parent.gameObject.SetActive(false);
+ }
+
+ if(levelManager.yellowTarget > 0 &&
+   yellowCollected >= levelManager.yellowTarget)
+ {
+    yellowText.transform.parent.gameObject.SetActive(false);
+ }
+
+ if(levelManager.purpleTarget > 0 &&
+   purpleCollected >= levelManager.purpleTarget)
+ {
+    purpleText.transform.parent.gameObject.SetActive(false);
+ }
+
+ if(levelManager.orangeTarget > 0 &&
+    orangeCollected >= levelManager.orangeTarget)
+ {
+     orangeText.transform.parent.gameObject.SetActive(false);
+   }
+     
+   if(levelManager != null && score > 0)
+{
+    if(score >= levelManager.targetScore)
+    { 
+        PlayerPrefs.SetInt("FinalScore", score);
+        
+        levelManager.CheckCandyTarget(
+            redCollected,
+            blueCollected,
+            greenCollected,
+            yellowCollected,
+            purpleCollected,
+            orangeCollected
+        );
+       
+    }
+    
+}
+    
+    
+}
+    List<Vector2Int> GetMatches()
+    {
+        List<Vector2Int> matches =
+            new List<Vector2Int>();
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                int type = candyType[x, y];
+
+                if (type < 0)
+                    continue;
+
+                if (x < width - 2)
+                {
+                    if (
+                        candyType[x + 1, y] == type &&
+                        candyType[x + 2, y] == type
+                    )
+                    {
+                        matches.Add(new Vector2Int(x, y));
+                        matches.Add(new Vector2Int(x + 1, y));
+                        matches.Add(new Vector2Int(x + 2, y));
+                    }
+                }
+                                     if (
+                                      x < width - 3 &&
+                                           candyType[x + 1, y] == type &&
+                                       candyType[x + 2, y] == type &&
+                                       candyType[x + 3, y] == type
+                                 )
+                               { 
+                                     bombPosition = new Vector2Int(x + 1, y);
+                                
+                                }
+                                if (
+                                      y < height - 3 &&
+                                      candyType[x, y + 1] == type &&
+                                      candyType[x, y + 2] == type &&
+                                      candyType[x, y + 3] == type
+                                   )
+                            {
+                                    bombPosition = new Vector2Int(x, y + 1);
+                                    
+                             }
+                            
+                            
+
+                if (y < height - 2)
+                {
+                    if (
+                        candyType[x, y + 1] == type &&
+                        candyType[x, y + 2] == type
+                    )
+                    {
+                        matches.Add(new Vector2Int(x, y));
+                        matches.Add(new Vector2Int(x, y + 1));
+                        matches.Add(new Vector2Int(x, y + 2));
+                    }
+                }
+            }
+        }
+
+        return matches;
+    }
+
+    void DestroyCandy(int x, int y)
+    {  
+
+        int type = candyType[x, y];
+
+       if (type == bombType)
+       {
+            if(grid[x,y] != null)
+            Destroy(grid[x,y]);
+
+             grid[x, y] = null;
+             candyType[x, y] = -1;
+             return;
+        }
+
+       if (type == 0) redCollected++;
+       if (type == 1) blueCollected++;
+       if (type == 2) greenCollected++;
+       if (type == 3) yellowCollected++;
+       if (type == 4) purpleCollected++;
+       if (type == 5) orangeCollected++;
+    
+      
+        if (grid[x, y] == null)
+            return;
+
+        // POP SOUND
+        if (audioSource != null &&
+            popSound != null)
+        {
+            audioSource.PlayOneShot(popSound);
+        }
+
+        StartCoroutine(Pop(grid[x, y]));
+
+        grid[x, y] = null;
+        candyType[x, y] = -1;
+    }
+
+    IEnumerator Fall()
+    {
+        // FALL SOUND
+        if (audioSource != null &&
+            fallSound != null)
+        {
+            audioSource.PlayOneShot(fallSound);
+        }
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 1; y < height; y++)
+            {
+                if (
+                    grid[x, y] != null &&
+                    grid[x, y - 1] == null
+                )
+                {
+                    int ny = y;
+
+                    while (
+                        ny > 0 &&
+                        grid[x, ny - 1] == null
+                    )
+                    {
+                        ny--;
+                    }
+
+                    grid[x, ny] = grid[x, y];
+
+                    candyType[x, ny] =
+                        candyType[x, y];
+
+                    grid[x, y] = null;
+                    candyType[x, y] = -1;
+
+                    StartCoroutine(
+                        Move(
+                            grid[x, ny],
+                            GetPos(x, ny)
+                        )
+                    );
+                }
+            }
+        }
+
+        yield return new WaitForSeconds(0.15f);
+
+        for (int x = 0; x < width; x++)
+        {
+            for (
+                int y = height - 1;
+                y >= 0 &&
+                grid[x, y] == null;
+                y--
+            )
+            {
+                Spawn(x, y);
+            }
+        }
+
+        yield return new WaitForSeconds(0.15f);
+    }
+
+    IEnumerator Move(
+        GameObject obj,
+        Vector2 target
+    )
+    {
+        if (obj == null)
+            yield break;
+
+        while (
+            obj != null &&
+            Vector2.Distance(
+                obj.transform.position,
+                target
+            ) > 0.01f
+        )
+        {
+            obj.transform.position =
+                Vector2.Lerp(
+                    obj.transform.position,
+                    target,
+                    moveSpeed *
+                    Time.deltaTime
+                );
+
+            yield return null;
+        }
+
+        // ===== FIX ERROR =====
+        if (obj != null)
+        {
+            obj.transform.position = target;
+        }
+        // =====================
+    }
+
+    IEnumerator Pop(GameObject obj)
+    {
+        if (obj == null)
+            yield break;
+
+        Vector3 start =
+            obj.transform.localScale;
+
+        float t = 0;
+
+        while (t < 1)
+        {
+            // ===== FIX ERROR =====
+            if (obj == null)
+                yield break;
+            // =====================
+
+            t +=
+                Time.deltaTime *
+                popSpeed;
+
+            obj.transform.localScale =
+                Vector3.Lerp(
+                    start,
+                    Vector3.zero,
+                    t
+                );
+
+            yield return null;
+        }
+
+        // ===== FIX ERROR =====
+        if (obj != null)
+        {
+            Destroy(obj);
+        }
+        // =====================
+    }
+
+    bool Inside(int x, int y)
+    {
+        return
+            x >= 0 &&
+            x < width &&
+            y >= 0 &&
+            y < height;
+    }
+
+    Vector2 GetSnapPos(Vector2 world)
+    {
+        int x = GetX(world);
+        int y = GetY(world);
+
+        return GetPos(x, y);
+    }
+
+    int GetX(Vector2 pos)
+    {
+        return Mathf.RoundToInt(
+            (pos.x - startPos.x) /
+            cellSize
+        );
+    }
+
+    int GetY(Vector2 pos)
+    {
+        return Mathf.RoundToInt(
+            (pos.y - startPos.y) /
+            cellSize
+        );
+    }
+
+    Vector2 GetPos(int x, int y)
+    {
+        return new Vector2(
+            startPos.x + x * cellSize,
+            startPos.y + y * cellSize
+        );
+    }
+
+   IEnumerator BombFall()
+   {
+      if (bombRunning)
+         yield break;
+
+      bombRunning = true;
+
+      yield return new WaitForSeconds(0.1f);
+
+      yield return Fall();
+
+      yield return new WaitForSeconds(0.1f);
+
+      yield return ProcessBoard();
+
+      bombRunning = false;
+    }
+
+     public GameObject[,] GetGrid()
+   {
+     return grid;
+    }
+
+   public int[,] GetCandyType()
+   {
+        return candyType;
+    }
+    public int GetWidth()
+   {
+     return width;
+   }
+
+   public int GetHeight()
+   {
+     return height;
+   }
+    public bool IsBusy()
+   {
+       return busy;
+    }
+
+   public bool IsProcessing()
+   {
+      return processingBoard;
+    }
+
+   public int GetCandyTypeAt(int x, int y)
+   {
+      return candyType[x, y];
+    }
+
+    public bool IsInside(int x, int y)
+   {
+       return Inside(x, y);
+    }
+     public bool HasMatchAt(int x, int y)
+   {
+     int type = candyType[x, y];
+
+     if (type < 0)
+        return false;
+
+     int count = 1;
+
+     int i = x - 1;
+     while (i >= 0 && candyType[i, y] == type)
+     {
+        count++;
+        i--;
+     }
+
+     i = x + 1;
+     while (i < width && candyType[i, y] == type)
+     {
+         count++;
+         i++;
+     }
+
+     if (count >= 3)
+        return true;
+
+     count = 1;
+
+     i = y - 1;
+     while (i >= 0 && candyType[x, i] == type)
+     {
+        count++;
+        i--;
+     }
+
+     i = y + 1;
+     while (i < height && candyType[x, i] == type)
+       {
+         count++;
+         i++;
+        }
+ 
+     return count >= 3;
+   }
+   public bool WouldMakeMatch(int x1, int y1, int x2, int y2)
+   {
+     int a = candyType[x1, y1];
+     int b = candyType[x2, y2];
+
+     candyType[x1, y1] = b;
+     candyType[x2, y2] = a;
+
+     bool result =
+        HasMatchAt(x1, y1) ||
+        HasMatchAt(x2, y2);
+
+     candyType[x1, y1] = a;
+     candyType[x2, y2] = b;
+
+     return result;
+    }
+    IEnumerator UnlockInput()
+   {
+     yield return new WaitForSeconds(0.5f);
+
+     while (Input.GetMouseButton(0))
+     {
+         yield return null;
+      }
+
+     inputLocked = false;
+    }
+}
